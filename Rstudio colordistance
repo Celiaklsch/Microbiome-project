@@ -1,0 +1,104 @@
+#Pre-processing
+# As colordistance does not include image calibration tools, images must be pre-processed and calibrated before being analysed in R.
+# 1. open the image in Photoshop CC 2019
+# 2. Go to Image -> Analysis -> Define measurement scale -> Customise and select 1mm in the image ruler.
+# 3. Using the quick selection tool (keyboard shortcut W) of small size (10 pixels or less), select the amphipod to remove it from its background. Be as precise as possible, especially around the legs.
+# 4. Go to Image -> Analysis -> Save measurements
+# 5. Copy the amphipod selection (ctrl+C), create a new file (ctrl+N) with the following specifications:
+# - A4 format (Width = 210mm, Height = 297mm, orientation = Portrait, uncheck Artboards)
+# Resolution = 300 pixels/inch
+# - Colour mode: RGB colour, 8 Bit
+# - Background content: Black
+# - Advanced options :
+# - Colour profile: CIE RGB
+# - Pixel aspect ratio: Square pixels
+#and paste the amphipod into the new file (ctrl+V)
+# 7. Save the image in PNG format (go to file -> save as -> save as copy. [This may not be necessary for saving as a copy, but only for exporting as : In the dialogue box, scroll down to "Colour space" and deselect "convert to sRGB" and "Integrated colour profile"].
+# 8. import the PNG image with black background into R using the code below, and proceed with the analyses.
+
+#Image analysis with the colordistance package (https://hiweller.github.io/colordistance/colordistance-introduction.html)
+#install.packages('colordistance')
+library(colordistance)
+
+#image, black background
+
+#Load image
+#Delete background based on hum colours (0,0,0 is black, and the manual says that an upper limit of 0.1,0.1,0.1 should work to remove black backgrounds)
+#To remove the green background colour (hex # 288319, RGB 40, 131, 25), I try lower and upper limits of 0.1 as follows
+#The ICELab conversion uses daylight (D65), which is closer to the white light of the microscope we used (and not yellow light).
+
+amph = loadImage("test_colordistanceR/AMP_23-100_blackBack_CIErgb.png", lower = c(0,0,0), upper = c(0.1,0.1,0.1), hsv = TRUE, CIELab = TRUE, ref.white = "D65")
+colordistance::plotPixels(amph, lower = NULL, upper = NULL)  #Import image with the top and bottom parts of the image. 
+ 
+#No black dots in the 0,0,0 corner of the graph - seems to have worked to remove the black background
+
+names(amph) 
+dim(amph$original.rgb) #size (in pixels) of the original image (3508*2480 gives the number of pixels with background = 8699840)
+dim(amph$filtered.rgb.2d) #matrice (en pixels) de l'image sans le fond en RGB
+dim(amph$filtered.lab.2d) #matrice (en pixels) de l'image sans le fond en CIELab
+dim(amph$filtered.hsv.2d) #matrice (en pixels) de l'image sans le fond en HSV
+amph_hist = colordistance::getImageHist(amph, bins = c(2,2,2)) #the average colour of all pixels assigned to a bin is used (rather than the centre of the bin. K-means uses the centre)
+ 
+#The histogram does not show the black points. Next step: automate analysis against a black background
+
+##############
+#Automate the binning of several images at once
+images = dir("DIRECTORY CONTAINING ALL IMAGES AND ONLY THE IMAGES TO BE USED, IN BLACK BACKGROUND", full.names = TRUE)
+histList = colordistance::getHistList(images, lower = c(0,0,0), upper = c(0.1, 0.1, 0.1), bins = rep(2, 3), plotting = FALSE, pausing = FALSE)
+
+#Use the option below to plot histograms for each image
+histList = colordistance::getHistList(images, lower = c(0,0,0), upper = c(0.1, 0.1, 0.1), bins = rep(2, 3), plotting = TRUE, pausing = FALSE)
+#No black in any of the histograms, so removing the background worked.
+
+#To see the resulting clusters in colour space, use the plotCLusters() function.
+plotClusters(histList) 
+ 
+histList  #A list of data frames, one data frame for each image. First three columns = red, green and blue coordinates of each cluster (each of the 8 boxes); last column (Pct) = relative size of each cluster as a proportion.
+# For each individual, 8 values of Red, Blue and Green are extracted + 8 values of Pct
+#We can use the hist list values for our analyses. 
+#To transform a list into a data frame :
+library(dplyr)
+df <-  as.data.frame(do.call(rbind, histList))
+head(df)
+#Each image will have eight values representing the eight bins used (eight rows, from bins = rep(2,3) in the getHistList function - this is how we partition all the images so that they have the same size in colour space (they are all grouped into eight bins)).
+#to export the database in csv format (it will be saved in the working directory - use getwd() to find out where) :
+write.table(df, "amphipods_rgb_eight_bins.csv", sep = ",", row.names = FALSE)
+
+#Create a distance matrix (this can then be used to compare with the microbiome beta-diversity distance based on metrics such as Bray Curtis, using a Mantel test).
+#comparing the distance between histograms (there are four methods in the package to do this, below is the one recommended by the package author and also used in Kendal et al., 2013 - Earth Movers Distance)
+#Earth Movers Distance (EMD) is the minimum cost of transforming one distribution into another (the greater the colour difference, the greater the cost)
+CMD = colordistance::getColorDistanceMatrix(histList, method = "emd", plotting = FALSE)#Note: this is based on the presence/absence of colours.CMD
+#matrix of pairwise comparisons. Each cell is a quantification of the colour differences between two objects.
+#Save this matrix of pairwise comparisons for later analysis
+write.table (as.data.frame(CMD), "amphipods_colour_EMD_distance_pairwise.csv", sep = ",", row.names = FALSE)
+#To save the dendrogram displayed around the heat maps, use exportTree)() in newick format.
+colordistance::exportTree(CMD, file = "colour_distance_EMD_tree_trial_amphipods.newick", return.tree = FALSE)
+#Make an interesting colour distance figure, which can be used later:
+#Trace the colour distance matrix in a heat map
+colordistance::heatmapColorDistance(CMD)
+
+#If the proportion of colours is greater than their presence/absence, use the "color.dist" method.
+CMD = colordistance::getColorDistanceMatrix(histList, method = 'color.dist', plotting = FALSE)
+CMD
+colordistance::heatmapColorDistance(CMD)
+ 
+
+#Save this matrix of pairwise comparisons for later analysis
+write.table (as.data.frame(CMD), "amphipods_colour_distance_proportion_pairwise.csv", sep = ",", row.names = FALSE)
+#To save the dendrogram displayed around the heat maps, use exportTree)() in newick format.
+colordistance::exportTree(CMD, file = "colour_distance_proportion_tree_trial_amphipods.newick", return.tree = FALSE)
+#To view and modify trees in newick format, a small (free) program is Figtree (https://github.com/rambaut/figtree/releases) or you can use MegaX/Mega 11.
+
+#The heatmap dendrogram shown above is unreadable and unusable. It will be modified according to the following code: 
+setwd("D:/Scolaire/MASTER 2/Stage/Project OG8254 - Microbiome project/Catégoriser les couleurs des morphes/Figures obtenues avec R dossier colordistance")
+data <- read.csv("amphipods_colour_EMD_distance_pairwise_csv.csv",sep=";",row.names=1)#open work session
+data<-as.matrix(data)
+heatmap(data)
+colnames(data)
+library(RColorBrewer)
+pdf("test.pdf")
+coul <- colorRampPalette(brewer.pal(8, "PiYG"))(25)
+heatmap(data,symm=T, cexRow=0.3,cexCol=0.3, col = coul,runif(400, 0, 5))
+dev.off()
+
+ 
