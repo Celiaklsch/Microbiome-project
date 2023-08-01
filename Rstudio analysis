@@ -1,0 +1,463 @@
+library(qiime2R)
+library(ggplot2)
+library(vegan)
+library(dplyr)
+library(scales)
+library(grid)
+library(reshape2)
+library("data.table")
+library(phyloseq)
+library(FactoMineR)
+library(tidyverse)
+library(gplots)
+library(ggrepel) # for offset labels
+library(ggtree) # for visualizing phylogenetic trees
+library(ape) # for manipulating phylogenetic trees
+library(microeco)
+library(file2meco)
+library(magrittr)
+theme_set(theme_bw())
+library(RColorBrewer)
+library(microbiome)
+library(GUniFrac)
+library(viridis) #The package contains eight color scales: "viridis", the primary choice, and five alternatives with similar properties - 
+#"magma", "plasma", "inferno", "civids", "mako", and "rocket" -, and a rainbow color map - "turbo".
+library(ggalluvial)
+library(corncob)
+library(GUniFrac)
+
+library(readr)
+metadata = read_tsv("metadata_inf2.tsv")
+
+# we want to make the analysis reproducible by defining the setseed
+set.seed(3930)
+
+#  create a phyloseq object with several qza files 
+physeq = qza_to_phyloseq(
+  features = "clean-filtered-table-2-500-silva_noParasites.qza",
+  tree = "clean-filtered-2-500-rooted-tree_noParasite.qza",
+  taxonomy = "clean-filtered-2-500-taxonomy-silva_noParasites.qza",
+  metadata = "metadata_inf2.tsv"#changer le tableau de données en fonction de ce quon veut comme données
+)
+physeq
+##phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 5646 taxa and 65 samples ]
+#sample_data() Sample Data:       [ 65 samples by 7 sample variables ]
+#tax_table()   Taxonomy Table:    [ 5646 taxa by 7 taxonomic ranks ]
+#phy_tree()    Phylogenetic Tree: [ 5646 tips and 5630 internal nodes ]
+
+sample_data(physeq)
+tax_table(physeq)
+
+#create a microtable object using qiime2 qza files
+#The qiime2meco() function is designed to create the microtable object using files from 
+#QIIME2 files (Bolyen et al. 2019). The example data is the ASV abundance array (sequence variant 
+#of amplicons) based on DADA2 (Callahan et al. 2016).
+mec1 = qiime2meco(
+  "clean-filtered-table-2-500-silva_noParasites.qza",
+  sample_table = "metadata_inf2.tsv", #changer le tableau de données en fonction de ce quon veut comme données
+  taxonomy_table = "clean-filtered-2-500-taxonomy-silva_noParasites.qza",
+  phylo_tree = "clean-filtered-2-500-rooted-tree_noParasite.qza",
+  rep_fasta = "clean-filtered-2-500-rep-seqs-silva_noParasites.qza")
+mec1
+#microtable-class object:
+#sample_table have 102 rows and 7 columns
+#otu_table have 5646 rows and 65 columns
+#tax_table have 5646 rows and 7 columns
+#phylo_tree have 5646 tips
+#rep_fasta have 5646 sequences
+
+mec1$sample_table %>% rownames()
+mec1$sample_table %>% colnames()
+mec1$otu_table %>% colnames
+mec1$otu_table %>% nrow
+mec1$otu_table %>% rownames
+mec1$sample_table %>% dim
+
+#add tax_table domain names as the last column of tax_table directly; useful in 
+#certain analyses, for example the search for biomarkers at OTU/ASV level.
+ncol(mec1$tax_table)
+mec1$add_rownames2taxonomy(use_name = "OTU")
+ncol(mec1$tax_table)
+colnames(mec1$tax_table)
+mec1$tax_table$OTU
+
+# use the R subset function to filter taxa in tax_table (include only archaea and bacteria) 
+#this should not change anything as the data provided is already filtered)
+mec1$tax_table %<>% base::subset(Kingdom == "k__Archaea" | Kingdom == "k__Bacteria")
+mec1$filter_pollution(taxa = c("mitochondria", "chloroplast")) #29 taxa retirés
+
+# use sample_sums() to check the sequence numbers in each sample.
+mec1$sample_sums() %>% range
+mec1
+
+###### Taxa abundance
+#Calculate the abundance of taxa at each taxonomic rank using cal_abund()
+mec1$cal_abund()
+# return dataset$taxa_abund
+class(mec1$taxa_abund)
+# shows part of the relative abundance at the phylum level
+mec1$taxa_abund$Phylum[1:5, 1:5]
+#                                 8254-001-00-01 8254-002-00-01 8254-003-00-01 8254-004-00-01 8254-005-00-01
+#k__Bacteria|p__Proteobacteria        0.32182408     0.54109139     0.34543272     0.40204211     0.24227668
+#k__Bacteria|p__Bacteroidota          0.36599436     0.30155599     0.32095510     0.15207787     0.23760677
+#k__Bacteria|p__Firmicutes            0.11823656     0.03280006     0.01482115     0.03446961     0.37435140
+#k__Bacteria|p__Actinobacteriota      0.07132932     0.01387976     0.03384313     0.24808105     0.06797318
+#k__Bacteria|p__Verrucomicrobiota     0.10152006     0.04412302     0.18554620     0.03172825     0.05288577
+
+#The save_abund() function easily saves the taxon abundance file in a local location.
+mec1$save_abund(dirpath = "Phylum_abund")
+
+# sum of abundance for each taxon; very useful for checking and filtering taxon abundance
+mec1$taxa_sums()
+summary(mec1$taxa_sums())
+# Min.  1st Qu.   Median     Mean   3rd Qu.     Max. 
+# 2.0     10.0     50.0     382.6   141.0    126530.0 
+
+#Phylum
+taxalevel = "Phylum"
+p1 <- trans_abund$new(dataset = mec1, taxrank = taxalevel, ntaxa = 20)
+#As the number of samples is large, we do not show the names of the samples on the x-axis and we add facet to show the abundance according to the groups. 
+#we add a facet to show abundance as a function of groups.
+library(microeco) 
+p1$plot_bar(others_color = "grey70", facet = "Infection", xtext_keep = FALSE, legend_text_italic = FALSE, color_palette_20)+theme(axis.text.x = element_text(angle = 90))
+#If color_palette doesn't work, create it manually :
+color_palette_20 = c("#1f77b4", "#aec7e8", "#ff7f0e" ,"#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#8B4513", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf","#EEAD0E")
+
+dim(mec1$taxa_abund$Phylum)
+
+#Family
+taxalevel = "Family"
+p1 <- trans_abund$new(dataset = mec1, taxrank = taxalevel, ntaxa = 20)
+#As the sample number is large, we do not show the sample names in x axis and add the facet to show abundance according to groups.
+p1$plot_bar(others_color = "grey70", facet = "Infection", xtext_keep = FALSE, legend_text_italic = FALSE, color_palette_20)+theme(axis.text.x = element_text(angle = 90))
+dim(mec1$taxa_abund$Family)
+
+#The groupmean parameter can be used to obtain the group average barplot.
+t3 <- trans_abund$new(dataset = mec1, taxrank = "Phylum", groupmean = "Infection")
+g1 <- t3$plot_bar(others_color = "grey70",legend_text_italic = FALSE)
+g1 + theme_classic() + theme(axis.title.y = element_text(size = 18)) 
+
+t3 <- trans_abund$new(dataset = mec1, taxrank = "Family", groupmean = "Infection")
+g1 <- t3$plot_bar(others_color = "grey70",legend_text_italic = FALSE)
+g1 + theme_classic() + theme(axis.title.y = element_text(size = 18)) 
+#_________________________________________________________________________________________________________
+#Heat map
+dim(mec1$taxa_abund$Family)
+t1 <- trans_abund$new(dataset = mec1, taxrank = "Family", ntaxa = 20)
+t1$plot_heatmap(facet = "sampletype", xtext_keep = FALSE, withmargin = FALSE)
+t1$plot_heatmap(facet = "Infection", xtext_keep = FALSE, withmargin = FALSE, color_values = viridis(n=100))+theme(axis.text.x = element_text(angle = 90))
+
+dim(mec1$taxa_abund$Phylum)
+t1 <- trans_abund$new(dataset = mec1, taxrank = "Phylum", ntaxa = 14)
+t1$plot_heatmap(facet = "sampletype", xtext_keep = FALSE, withmargin = FALSE)
+t1$plot_heatmap(facet = "Infection", xtext_keep = FALSE, withmargin = FALSE, color_values = viridis(n=100))+theme(axis.text.x = element_text(angle = 90))
+
+############## Venn iagram 
+# merge samples into a single community for each 
+#Infection 
+dataset <- mec1$merge_samples(use_group = "Infection")
+# dataset1 is a new microarray object
+# create the trans_venn object
+t1 <- trans_venn$new(dataset, ratio = NULL)
+t1$plot_venn()
+# create a Venn diagram with more information
+t1 <- trans_venn$new(dataset, ratio = "seqratio")
+t1$plot_venn()
+
+##############  Differential abundance test
+###Metastat
+#family
+family_diff <- trans_diff$new(dataset = mec1, method = "metastat", group = "Infection", taxa_level = "Family") # option to add boots = 10000 -did not change results 
+View(family_diff$res_diff) # see t1$res_diff for the result
+setwd("D:/Scolaire/MASTER 2/Stage/Redaction de l'étude & rapport/Résultats/data from qiime2/Tables sorties du code")
+write.table(family_diff$res_diff, 'metastat_family.csv', sep = ",", row.names = FALSE)
+
+view(family_diff$res_diff)
+family_diff$plot_diff_abund(use_number = 1:20, select_group = "non-infecte - acanthocephale", coord_flip = F)
+family_diff$plot_diff_abund(use_number = 1:20, select_group = "non-infecte - cestode",coord_flip = F)
+family_diff$plot_diff_abund(use_number = 1:20, select_group = "acanthocephale - cestode",coord_flip = F)
+
+###LeFSe
+#LEfSe combines non-parametric testing and linear discriminant analysis (Segata et al. 2011).
+t1 <- trans_diff$new(dataset = mec1, method = "lefse", group = "Infection",taxa_lexel='Family', alpha = 0.05, lefse_subgroup = NULL) #no significant result! 
+
+t1
+View(t1$res_diff) # voir t1$res_diff pour le résultat
+t1$plot_diff_cladogram(use_taxa_num = 200, use_feature_num = 50, clade_label_level = 5, group_order = c('infecte','non-infecte','acanthocephale','cestode'))# ERREUR
+#Part of groups in group_order, non-infecte infection mixte cestode, not found in the feature table ...
+# the problem is that we only obtain results for whipworms 
+# because infections with whipworms seem to have the highest abundance and therefore cover the whole of the LeFSe analysis
+# conclusion: the LeFSe analysis is not appropriate and will not be described here 
+
+#But we can use the abundance diagram for the LeFSe method
+library(microbiomeMarker)
+mm_lefse <- run_lefse(
+  physeq, 
+  group= "Infection",
+  norm = "CPM",
+  wilcoxon_cutoff = 0.05,
+  kw_cutoff = 0.05,
+  lda_cutoff = 1, 
+  
+)
+mm_lefse
+
+#microbiomeMarker-class inherited from phyloseq-class
+#normalization method:              [ CPM ]
+#microbiome marker identity method: [ lefse ]
+#marker_table() Marker Table:       [ 6 microbiome markers with 5 variables ]
+#otu_table()    OTU Table:          [ 3232 taxa and  65 samples ]
+#sample_data()  Sample Data:        [ 65 samples by  7 sample variables ]
+#tax_table()    Taxonomy Table:     [ 3232 taxa by 1 taxonomic ranks ]
+
+# histogram of marker abundance according to LeFSe
+plot_abundance(mm_lefse, group="Infection")
+
+###ANOVA
+#differential abundance graph families anova method 
+t1 <- trans_diff$new(dataset = mec1, method = "anova", group = "Infection", taxa_level = "Family", filter_thres = 0.001)
+t1$plot_diff_abund(use_number = 1:10, add_sig = T, coord_flip = F)
+
+### Corncob 
+#subset of data to include infection types (non-infected, mixed infection, acanthocephalic and cestode)
+df_phylum <- physeq %>%
+  phyloseq::subset_samples(Infection %in% c('infection mixte','non-infecte','acanthocephale','cestode')) %>%
+  tax_glom("Phylum") 
+sample_data(df_phylum)
+df_phylum
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 41 taxa and 62 samples ]
+#sample_data() Sample Data:       [ 62 samples by 7 sample variables ]
+#tax_table()   Taxonomy Table:    [ 41 taxa by 7 taxonomic ranks ]
+#phy_tree()    Phylogenetic Tree: [ 41 tips and 40 internal nodes ]
+
+df_family <- physeq %>%
+  phyloseq::subset_samples(Infection %in% c('infection mixte','non-infecte','acanthocephale','cestode')) %>%
+  tax_glom("Family") 
+sample_data(df_family)  
+df_family
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 399 taxa and 62 samples ]
+#sample_data() Sample Data:       [ 62 samples by 7 sample variables ]
+#tax_table()   Taxonomy Table:    [ 399 taxa by 7 taxonomic ranks ]
+#phy_tree()    Phylogenetic Tree: [ 399 tips and 398 internal nodes ]
+
+#Differential abundance and variability in several taxa
+library(VGAM)
+phylum <- differentialTest(formula = ~ Infection,
+                           phi.formula = ~ Infection,
+                           formula_null = ~ 1,
+                           phi.formula_null = ~ 1,
+                           data = df_phylum,
+                           test = "Wald", boot = FALSE,
+                           fdr_cutoff = 0.05)
+plot(phylum) # error means 0 significant results
+phylum$significant_taxa 
+phylum$significant_models
+phylum$restrictions_DA
+phylum$restrictions_DV
+
+family <- differentialTest(formula = ~ Infection,
+                           phi.formula = ~ Infection,
+                           formula_null = ~ 1,
+                           phi.formula_null = ~ 1,
+                           data = df_family,
+                           test = "Wald", boot = FALSE,
+                           fdr_cutoff = 0.05)
+
+plot(family)# error means 0 significant results
+family$significant_taxa 
+family$significant_models
+family$restrictions_DA
+family$restrictions_DV
+
+
+
+########## Alpha diversity ---------------------------------------------------------
+
+###Phylum
+dat = mecphy
+
+#If you want to add Faith's phylogenetic diversity, use PD = TRUE, which will be a bit slow.
+library(picante)
+#calculate significance
+library(agricolae)
+dat1 <- trans_alpha$new(dataset = mec1, group = "Infection")
+dat1$cal_diff(method = "anova", anova_set = "sampletype") #multiple factor amova
+dat1$res_diff # NULL
+
+#plot box plots
+library(ggpubr)
+mec1$cal_alphadiv(measure = c("Observed", "Coverage", "Chao1", "ACE", "Shannon", "Simpson", "InvSimpson", "PD"), PD = TRUE)
+mec1$alpha_diversity #alpha-diversity measures
+
+dat1 <- trans_alpha$new(dataset = mec1, group = "Infection")
+dat1$cal_diff(method = "anova", anova_set = "infection+?") #multiple factor anova
+dat1$res_diff
+#plot
+dat1$plot_alpha(measure = "PD")
+dat1$plot_alpha(measure = "Observed")
+dat1$plot_alpha(measure =  "Chao1")
+dat1$plot_alpha(measure =  "ACE")
+dat1$plot_alpha(measure = "Shannon")
+dat1$plot_alpha(measure =  "Simpson")
+dat1$plot_alpha(measure = "InvSimpson")
+
+########## Beta diversity ----------------------------------------------------------
+###Phylum
+dat = mec1
+dat$cal_betadiv(unifrac = TRUE)
+Bray <- trans_beta$new(dataset = dat, group = "Infection", measure = "bray") 
+Bray$cal_ordination(ordination = "PCoA")
+Bray$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"), color_values = viridis(n=4)) 
+Bray$cal_manova(manova_all = TRUE)
+Bray$res_manova #significance for all groups (pooled)
+#adonis2(formula = use_formula, data = metadata)
+#                Df         SumOfSqs        R2        F        Pr(>F)  
+#Infection        2          1.0661       0.04434   1.3687     0.027 *
+#Residual        59          22.9781      0.95566                
+#  Total         61          24.0442      1.00000  
+Bray$cal_manova(manova_all = FALSE)
+Bray$res_manova #significance for pairwise comparisons
+#                         Groups measure        F         R2       p.value    p.adjusted Significance
+#1 non-infecte vs acanthocephale    bray 1.258883 0.02504797       0.120        0.120             
+#2        non-infecte vs cestode    bray 1.323466 0.02738765       0.096        0.120             
+#3     acanthocephale vs cestode    bray 1.739494 0.07327426       0.012        0.036  
+write.table (Bray$res_manova, "betaDiv_brayCurtis_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+Jac <- trans_beta$new(dataset = dat, group = "Infection", measure = "jaccard")
+Jac$cal_ordination(ordination = "PCoA")
+Jac$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"),  color_values = viridis(n=4)) 
+Jac$cal_manova(manova_all = TRUE)
+Jac$res_manova #significance for all groups (pooled)
+#adonis2(formula = use_formula, data = metadata)
+#             Df      SumOfSqs       R2      F      Pr(>F)  
+#Infection    2       0.8956      0.0374    1.1461   0.07 .
+#Residual     59      23.0510     0.9626                
+#Total        61      23.9466     1.0000  
+Jac$cal_manova(manova_all = FALSE)
+Jac$res_manova #significance for pairwise comparisons
+#                         Groups measure        F         R2      p.value   p.adjusted Significance
+#1 non-infecte vs acanthocephale jaccard   1.180667   0.02352833   0.108      0.162             
+#2        non-infecte vs cestode jaccard   1.039449   0.02163741   0.306      0.306             
+#3     acanthocephale vs cestode jaccard   1.303576   0.05593889   0.039      0.117
+
+write.table (Jac$res_manova, "betaDivPhyla_Jaccard_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+Wei <- trans_beta$new(dataset = dat, group = "Infection", measure = "wei_unifrac")
+Wei$cal_ordination(ordination = "PCoA")
+Wei$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"),  color_values = viridis(n=4)) 
+Wei$cal_manova(manova_all = TRUE)
+Wei$res_manova #significance for all groups (pooled)
+#adonis2(formula = use_formula, data = metadata)
+#           Df  SumOfSqs      R2       F      Pr(>F)
+#Infection  2   0.05506     0.03978   1.2221  0.201
+#Residual  59   1.32903     0.96022              
+#Total     61   1.38409     1.00000 
+Wei$cal_manova(manova_all = FALSE)
+Wei$res_manova #significance for pairwise comparisons
+#                         Groups     measure         F         R2      p.value     p.adjusted Significance
+#1 non-infecte vs acanthocephale wei_unifrac    1.4847051 0.02940901   0.140      0.327             
+#2        non-infecte vs cestode wei_unifrac    0.9198918 0.01919645   0.467      0.467             
+#3     acanthocephale vs cestode wei_unifrac    1.2777064 0.05488970   0.218      0.327             
+
+write.table (Wei$res_manova, "betaDivPhyla_weiUnifrac_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+Unw <- trans_beta$new(dataset = dat, group = "Infection", measure = "unwei_unifrac")
+Unw$cal_ordination(ordination = "PCoA")
+Unw$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"),  color_values = viridis(n=4)) 
+Unw$cal_manova(manova_all = TRUE)
+Unw$res_manova #significance for all groups (pooled)
+#adonis2(formula = use_formula, data = metadata)
+#           Df  SumOfSqs      R2       F      Pr(>F)
+#Infection  2   0.5331      0.03642   1.115   0.259
+#Residual  59  14.1040      0.96358             
+#Total     61  14.6371      1.00000    
+Unw$cal_manova(manova_all = FALSE)
+Unw$res_manova #significance for pairwise comparisons
+#                       Groups       measure        F         R2      p.value   p.adjusted Significance
+#1 non-infecte vs acanthocephale unwei_unifrac 1.055577   0.02108809   0.309      0.309             
+#2        non-infecte vs cestode unwei_unifrac 1.029493   0.02143460   0.308      0.309             
+#3     acanthocephale vs cestode unwei_unifrac 1.466904   0.06250947   0.068      0.204             
+
+write.table (Unw$res_manova, "betaDivPhyla_UnwUnifrac_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+
+###Family
+dat = mec1
+dat$cal_betadiv(unifrac = TRUE)
+Bray <- trans_beta$new(dataset = dat, group = "Infection", measure = "bray")
+Bray$cal_ordination(ordination = "PCoA")
+Bray$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"),  color_values = viridis(n=3)) 
+Bray$cal_manova(manova_all = TRUE)
+Bray$res_manova #significativité pour tous les groupes (pool)
+#adonis2(formula = use_formula, data = metadata)
+#           Df  SumOfSqs      R2        F     Pr(>F)  
+#Infection  2   1.0661      0.04434   1.3687  0.025 *
+#Residual  59   22.9781     0.95566                
+#Total     61   24.0442     1.00000    
+Bray$cal_manova(manova_all = FALSE)
+Bray$res_manova #significativité pour les comparaisons par paire
+#                         Groups measure        F         R2      p.value   p.adjusted Significance
+#1 non-infecte vs acanthocephale    bray 1.258883     0.02504797   0.112      0.112             
+#2        non-infecte vs cestode    bray 1.323466     0.02738765   0.090      0.112             
+#3     acanthocephale vs cestode    bray 1.739494     0.07327426   0.010      0.030            *
+
+write.table (Bray$res_manova, "betaDivFamily_BrayCurtis_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+Jac <- trans_beta$new(dataset = dat, group = "Infection", measure = "jaccard")
+Jac$cal_ordination(ordination = "PCoA")
+Jac$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"),  color_values = viridis(n=3)) 
+Jac$cal_manova(manova_all = TRUE)
+Jac$res_manova #significance for all groups (pooled)
+#adonis2(formula = use_formula, data = metadata)
+#           Df  SumOfSqs     R2        F      Pr(>F)  
+#Infection  2   0.8956      0.0374    1.1461  0.088 .
+#Residual  59   23.0510     0.9626                
+#Total     61   23.9466     1.0000     
+Jac$cal_manova(manova_all = FALSE)
+Jac$res_manova #significance for pairwise comparisons
+#                         Groups measure        F         R2      p.value   p.adjusted Significance
+#1 non-infecte vs acanthocephale jaccard 1.180667     0.02352833   0.100      0.150             
+#2        non-infecte vs cestode jaccard 1.039449     0.02163741   0.322      0.322             
+#3     acanthocephale vs cestode jaccard 1.303576     0.05593889   0.038      0.114             
+
+write.table (Jac$res_manova, "betaDivFamily_Jaccard_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+#Unifrac pondéré
+Wei <- trans_beta$new(dataset = dat, group = "Infection", measure = "wei_unifrac")
+Wei$cal_ordination(ordination = "PCoA")
+Wei$plot_ordination(plot_color = "Infection",plot_type = c("point", "ellipse"),  color_values = viridis(n=3)) 
+Wei$cal_manova(manova_all = TRUE)
+Wei$res_manova #significance for all groups (pooled)
+#          Df   SumOfSqs      R2       F      Pr(>F)
+#Infection  2  0.05506      0.03978   1.2221  0.219
+#Residual  59  1.32903      0.96022              
+#Total     61  1.38409      1.00000     
+Wei$cal_manova(manova_all = FALSE)
+Wei$res_manova #significance for pairwise comparisons
+#                         Groups     measure         F         R2     p.value   p.adjusted Significance
+#1 non-infecte vs acanthocephale wei_unifrac 1.4847051    0.02940901   0.137     0.3315             
+#2        non-infecte vs cestode wei_unifrac 0.9198918    0.01919645   0.492     0.4920             
+#3     acanthocephale vs cestode wei_unifrac 1.2777064    0.05488970   0.221     0.3315             
+
+write.table (Wei$res_manova, "betaDivFamily_weiUnifrac_pairwiseResults.csv", sep = ",", row.names = FALSE)
+
+Unw <- trans_beta$new(dataset = dat, group = "Infection", measure = "unwei_unifrac")
+Unw$cal_ordination(ordination = "PCoA")
+Unw$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse"),  color_values = viridis(n=3)) 
+Unw$cal_manova(manova_all = TRUE)
+Unw$res_manova #significance for all groups (pooled)
+#          Df   SumOfSqs      R2      F       Pr(>F)
+#Infection  2   0.5331      0.03642   1.115   0.25
+#Residual  59  14.1040      0.96358             
+#Total     61  14.6371      1.00000           
+Unw$cal_manova(manova_all = FALSE)
+Unw$res_manova #significance for pairwise comparisons
+#                         Groups       measure        F         R2      p.value   p.adjusted Significance
+#1 non-infecte vs acanthocephale unwei_unifrac 1.055577     0.02108809   0.303      0.329             
+#2        non-infecte vs cestode unwei_unifrac 1.029493     0.02143460   0.329      0.329             
+#3     acanthocephale vs cestode unwei_unifrac 1.466904     0.06250947   0.070      0.210           
+
+write.table (Unw$res_manova, "betaDivFamily_UnwUnifrac_pairwiseResults.csv", sep = ",", row.names = FALSE)
