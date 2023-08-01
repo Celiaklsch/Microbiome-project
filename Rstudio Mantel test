@@ -1,0 +1,227 @@
+#Load packages
+
+library(qiime2R)
+library(ggplot2)
+library(vegan)
+library(dplyr)
+library(scales)
+library(grid)
+library(reshape2)
+library("data.table")
+library(phyloseq)
+library(FactoMineR)
+library(tidyverse)
+library(gplots)
+library(ggrepel) # for offset labels
+library(ggtree) # for visualizing phylogenetic trees
+library(ape) # for manipulating phylogenetic trees
+#install.packages("microeco") https://chiliubio.github.io/microeco_tutorial/basic-class.html#microtable-class
+#install.packages("file2meco")
+library(microeco)
+library(file2meco)
+library(magrittr)
+# fix the random number generation to make the results repeatable
+set.seed(123)
+# make the plotting background same with the tutorial
+library(ggplot2)
+theme_set(theme_bw())
+library(ggh4x)
+library(ALDEx2)
+library(GUniFrac)
+library(microbiome)
+
+### Distance matrix Colours 
+library(colordistance)
+images = dir("D:/Scolaire/MASTER 2/Stage/Project OG8254 - Microbiome project/Catégoriser les couleurs des morphes/R dossier colordistance/test_colordistance_noir_infection", full.names = TRUE)
+histList = colordistance::getHistList(images, lower = c(0,0,0), upper = c(0.1, 0.1, 0.1), bins = rep(2, 3), plotting = TRUE, pausing = FALSE)
+plotClusters(histList)
+histList # a list of data frames, one data frame for each image.
+#Earth Mover's Distance (EMD) is the minimum cost of transforming one distribution into another (the greater the colour difference, the higher the cost).
+CMD = colordistance::getColorDistanceMatrix(histList, method = "emd", plotting = FALSE)
+CMD #matrix of pairwise comparisons. This is what we want for the mantel test (there is no need to perform a PCA here, there is only one value per comparison per pair).
+write.table(CMD,"colordistance_matrix.csv", sep = ",", row.names = FALSE)
+##convert colour distance matrix to tsv file - notepad
+# "colour_dist.tsv"
+
+# load and subset data  (and rarefy) ----------------------------------------------------
+#metadata_inf2 = The metadata file with type of infection without the infection by both
+#amphipods_rgb_eight_bins : The eight colour measurements per amphipod
+#metadata_inf = The metadata file with type of infection without the infection by both (I removed the environmental samples)
+
+#read files in as a microeco table 
+mec = qiime2meco(
+  "clean-filtered-table-2-500-silva_noParasites.qza",
+  sample_table = "metadata_inf.tsv", #changer le tableau de données en fonction de ce quon veut comme données
+  taxonomy_table = "clean-filtered-2-500-taxonomy-silva_noParasites.qza",
+  phylo_tree = "clean-filtered-2-500-rooted-tree_noParasite.qza",
+  rep_fasta = "clean-filtered-2-500-rep-seqs-silva_noParasites.qza")
+
+
+mec
+mec %>% class
+class(mec$tax_table)
+mec$tidy_dataset()
+class(mec$sample_table)
+mec$sample_table[1:5,1:5]
+mec$sample_table %>% rownames()
+mec$sample_table %>% colnames()
+mec$otu_table %>% colnames
+mec$otu_table %>% rownames
+mec$sample_table %>% dim
+
+# make the taxonomic information unified, very important
+mec$tax_table %<>% tidy_taxonomy
+
+# use R subset function to filter taxa in tax_table (only include archaea and bacteria - should not change anything because this data I provided is already filtered)
+mec$tax_table %<>% base::subset(Kingdom == "k__Archaea" | Kingdom == "k__Bacteria")
+mec$filter_pollution(taxa = c("mitochondria", "chloroplast")) # 76 removed 
+
+# use sample_sums() to check the sequence numbers in each sample.
+mec$sample_sums() %>% range
+mec
+
+#RAREFY - Do it for alpha and beta diversity
+mec$rarefy_samples(sample.size = 500)
+mec$sample_sums() %>% range
+
+mec$sample_table$AMP.ID
+mec
+
+#ASV level
+mecASV = mec
+# use R subset function to filter taxa in tax_table (only include archaea and bacteria - should not change anything because this data I provided is already filtered)
+mecASV$tax_table %<>% base::subset(Kingdom == "k__Archaea" | Kingdom == "k__Bacteria")
+mecASV$filter_pollution(taxa = c("mitochondria", "chloroplast")) #0 removed 
+
+
+# Calculate Bray Curtis distances at ASV level ----------------------------
+
+dat = mecASV
+dat$cal_betadiv(unifrac = TRUE)
+Bray <- trans_beta$new(dataset = dat, group = "Infection", measure = "bray")
+Bray$cal_ordination(ordination = "PCoA")
+Bray$plot_ordination(plot_color = "Infection", plot_type = c("point", "ellipse")) 
+Bray$cal_manova(manova_all = TRUE)
+Bray$res_manova #significance for all groups (pooled)
+Bray$cal_manova(manova_all = FALSE)
+Bray$res_manova #significance for pairwise comparisons
+
+
+hist(Bray$res_ordination$scores$PCo1) #this shows the distribution of PCo1 scores 
+#Make a data frame to store these scores, so that it is easier to use it later
+bray_scores = as.data.frame(cbind(Bray$res_ordination$scores$PCo1, Bray$res_ordination$scores$AMP.ID, Bray$res_ordination$scores$Infection))
+
+colnames(bray_scores) = c('PC1-score', 'AMP-ID', 'Infection')
+rownames(bray_scores) = bray_scores$'AMP-ID'
+
+#Bray Curtis distances
+Bray$cal_group_distance (within_group = FALSE)
+Bray$res_group_distance
+Bray$plot_clustering(group = "Infection", replace_name = c("AMP.ID"))
+#the use_matrix has Bray Curtis microbiome distances for each individual
+Bray$use_matrix
+dim(Bray$use_matrix)
+class(Bray$use_matrix)
+bray_matrix = as.data.frame(Bray$use_matrix) #make a data frame with this information so that it is easier to use later
+bray_matrix
+colnames(bray_matrix)
+rownames(bray_matrix)
+match(colnames(bray_matrix), rownames(Bray$sample_table))
+colnames(bray_matrix) = Bray$sample_table$AMP.ID
+match(rownames(bray_matrix), rownames(Bray$sample_table))
+rownames(bray_matrix) = Bray$sample_table$AMP.ID
+head(bray_matrix)
+
+
+# Color distance ----------------------------------------------------------
+#Colour distance
+#colour = read.csv("colour_dist_matrix.csv")
+setwd("D:/Scolaire/MASTER 2/Stage/Redaction de l'étude & rapport/Résultats/data from qiime2")
+colour = read.table("colour_dist.tsv", sep = "\t", header = TRUE)
+head(colour)
+#View(colour)
+columns  = c("SampleID", colour$SampleID)
+length(columns)
+dim(colour)
+#make long format (colour is a pairwise matrix, transform it into a long data frame)
+library(graph4lg)
+class(colour)
+colnames(colour) = columns
+dim(colour)
+rownames(colour) = colour$SampleID
+colour = colour[,2:66]
+dim(colour)
+colour = as.matrix (colour)
+colour_df = pw_mat_to_df(colour)
+head(colour_df)
+#colour = colour [1:65, 1:65] #subset table to remove duplicated samples - done once and table saved, just use the saved table, there is no need to do this again
+#write.table(colour, 'colour_dist_correct_IDs.csv', sep = ",", row.names = FALSE)
+
+
+# Mantel test (individual, not ordered) -------------------------------
+#match bray_matrix with colour
+colnames(bray_matrix)
+colnames(colour)
+colnames(bray_matrix) %in% colnames(colour)
+
+rownames(bray_matrix)
+rownames(colour)
+rownames(bray_matrix) %in% rownames(colour)
+
+#We have two distance matrices, with measures for each individual (not grouped)
+#Mantel test (using data for each individual)
+library(ade4)
+colour = as.dist(colour)
+bray_matrix = as.dist(bray_matrix)
+mantel.randtest(colour, bray_matrix, nrepet = 9999)
+
+
+#Monte-Carlo test
+#Call: mantel.randtest(m1 = colour, m2 = bray_matrix, nrepet = 9999)
+
+#Observation: -0.06715898 
+
+#Based on 9999 replicates
+#Simulated p-value: 0.824 
+#Alternative hypothesis: greater 
+
+#Std.Obs   Expectation      Variance 
+#-0.9317109336 -0.0003870963  0.0051359987 
+
+
+
+# Mnatel test, individual, ordered   --------
+#Does the order of samples matter in both matrices compared in a Mantel test? If so, the result will be different
+#Order the colour table
+#transform dist matrix into long format to group samples under 'Infection'
+class(colour)
+head(colour)
+df_colour = pw_mat_to_df(colour)
+class(df_colour)
+head(df_colour)
+
+#order df_colour by sample name (from smallest to largerst ID number)
+ordered_df_colour = df_colour[order(row.names(df_colour)),]
+head(ordered_df_colour)
+tail(ordered_df_colour)
+
+#transform ordered df colour table back into pairwise matrix
+ordered_colour = df_to_pw_mat(ordered_df_colour, from = 'id_1', to = 'id_2', value = 'value')
+head(ordered_colour)
+
+
+#Now repeat Mantel test with ordered colour table
+#Mantel test
+library(ade4)
+ordered_colour = as.dist(ordered_colour)
+bray_matrix = as.dist(bray_matrix)
+mantel.randtest(ordered_colour, bray_matrix, nrepet = 9999) #same result --> order of rows in the two tables does not matter to the test, great!
+
+#Monte-Carlo test
+#Call: mantel.randtest(m1 = ordered_colour, m2 = bray_matrix, nrepet = 9999)
+#Observation: -0.06997945 
+#Based on 9999 replicates
+#Simulated p-value: 0.8375 
+#Alternative hypothesis: greater 
+#Std.Obs   Expectation      Variance 
+#-0.9820455755  0.0001764777  0.0051034683 
