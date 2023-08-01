@@ -173,8 +173,8 @@ rownames(bray_matrix) %in% rownames(colour)
 library(ade4)
 colour = as.dist(colour)
 bray_matrix = as.dist(bray_matrix)
-mantel.randtest(colour, bray_matrix, nrepet = 9999)
-
+mantel1<-mantel.randtest(colour, bray_matrix, nrepet = 9999)
+mantel1
 
 #Monte-Carlo test
 #Call: mantel.randtest(m1 = colour, m2 = bray_matrix, nrepet = 9999)
@@ -225,3 +225,187 @@ mantel.randtest(ordered_colour, bray_matrix, nrepet = 9999) #same result --> ord
 #Alternative hypothesis: greater 
 #Std.Obs   Expectation      Variance 
 #-0.9820455755  0.0001764777  0.0051034683 
+
+
+
+
+#############
+
+# Group samples under Infection -------------------------------------------
+
+#Group samples in the colour df table based on 'Infection' group
+infection_df = as.data.frame(cbind(mec$sample_table$AMP.ID, mec$sample_table$Infection)) #make a key linking AMP.ID and Infection
+colnames(infection_df) = c('AMP.ID', 'Infection') #rename columns
+head(infection_df)
+
+#add infection information to ordered_df_colour
+#first for id_1
+infection1 = character()
+infection1
+for (i in 1:nrow(ordered_df_colour)) {
+  status = match (ordered_df_colour[i,'id_1'], infection_df$AMP.ID)
+  infection = print(infection_df[status,2])
+  infection1 = c(infection1, infection)
+}
+ordered_df_colour$infection1 = infection1
+head(ordered_df_colour)
+rm(infection1)
+#now for id_2
+infection2 = character()
+infection2
+for (i in 1:nrow(ordered_df_colour)) {
+  status = match (ordered_df_colour[i,'id_2'], infection_df$AMP.ID)
+  infection = print(infection_df[status,2])
+  infection2 = c(infection2, infection)
+}
+ordered_df_colour$infection2 = infection2
+head(ordered_df_colour)
+#View(ordered_df_colour)
+summary(ordered_df_colour)
+rm (infection2)
+
+#create an id_link column for the infection groups
+library(stringi)
+infection_link = stri_paste(ordered_df_colour$infection1, ordered_df_colour$infection2, sep = "_")
+ordered_df_colour$infection_link = infection_link
+rm (infection_link)
+head(ordered_df_colour)
+class(ordered_df_colour$infection_link)
+
+#rename to the same group when the only difference is the order of comparison (example castode-acanto and acanto-cestode are the same group)
+infection_link = ifelse(ordered_df_colour$infection_link == 'cestode_acanthocephale','acanthocephale_cestode', 
+       ifelse(ordered_df_colour$infection_link == 'infection mixte_acanthocephale','acanthocephale_infection mixte',
+              ifelse (ordered_df_colour$infection_link == 'non-infecte_acanthocephale', 'acanthocephale_non-infecte',
+                      ifelse (ordered_df_colour$infection_link == 'infection mixte_cestode',  'cestode_infection mixte',
+                              ifelse (ordered_df_colour$infection_link == 'non-infecte_cestode','cestode_non-infecte',
+                                      ifelse(ordered_df_colour$infection_link == 'non-infecte_infection mixte', 'infection mixte_non-infecte', ordered_df_colour$infection_link))))))
+ordered_df_colour$infection_link = infection_link
+as.factor(infection_link) #10 levels, no longer 16
+rm (infection_link)
+
+#calculate a mean by group
+library(dplyr)
+group_colour = ordered_df_colour %>%
+  group_by (infection_link) %>%
+  summarise(value = mean(value))
+group_colour
+class(group_colour)
+
+#add a column for each Infection ID again
+ids = as.data.frame(str_split(group_colour$infection_link, "_", simplify = TRUE))
+class(ids)
+group_colour$infection1 = ids$V1
+group_colour$infection2 = ids$V2
+group_colour
+
+#make a pairwise table in excel, as this will not work as a distance matrix in R given the high values in within-group comparisons
+
+col_group = read.csv("group_colour_dist.csv", header = TRUE)
+head(col_group)
+class(col_group)
+row.names(col_group) = col_group$ids
+col_group = col_group[,2:5]
+col_group
+col_group = as.matrix(col_group)
+dim(col_group)
+#transform into distance matrix
+dist_col_group = as.dist(col_group, diag = FALSE) #diag = FALSE will remove withing-group comparisons (diag = TRUE will assing 0 to within-group comparisons)
+
+#microbiome group distance
+Bray$cal_group_distance (within_group = FALSE)
+Bray$res_group_distance
+bray_group = Bray$res_group_distance
+class(bray_group)
+head(bray_group)
+#separate the "Infection" column into two columns 
+df = str_split(bray_group$Infection, "vs", simplify = TRUE)
+bray_group = cbind(bray_group, df)
+head(bray_group)
+colnames(bray_group) = c("Value", "Infection_link", "infection1", "infection2")
+#transform the bray_group dataframe into a distance matrix
+class(bray_group)
+bray_group_matrix = df_to_pw_mat(bray_group, "infection1", "infection2", value = "Value")
+head(bray_group_matrix)
+#write the table in csv format to remove spaces, which are causing IDs to be interpreted as different IDs
+#write.table(bray_group_matrix, "bray_group_dist_matrix.csv",sep = ",", row.names = TRUE)
+bray_group_matrix = read.csv("bray_group_dist_matrix.csv", header = TRUE)
+head(bray_group_matrix)
+class(bray_group_matrix)
+row.names(bray_group_matrix) = bray_group_matrix$ids
+bray_group_matrix = bray_group_matrix[,2:5]
+bray_group_matrix
+bray_group_matrix = as.matrix(bray_group_matrix)
+dim(bray_group_matrix)
+#transform into distance matrix
+bray_group_matrix = as.dist(bray_group_matrix, diag = FALSE) #diag = FALSE will remove withing-group comparisons (diag = TRUE will assing 0 to within-group comparisons)
+
+# Mantel test for group distances -----------------------------------------
+library(ade4)
+mantel2<-mantel.randtest(dist_col_group, bray_group_matrix, nrepet = 9999)
+mantel2
+
+#Monte-Carlo test
+#Call: mantel.randtest(m1 = dist_col_group, m2 = bray_group_matrix, 
+#                      nrepet = 9999)
+
+#Observation: -0.8648071 
+
+#Based on 9999 replicates
+#Simulated p-value: 1 
+#Alternative hypothesis: greater 
+
+#Std.Obs  Expectation     Variance 
+#-1.838086481 -0.001467771  0.220613037 
+
+
+
+
+###########Linear trend scatterplot mantel
+library(ggplot2)
+library(hrbrthemes)
+library(ggpmisc)
+library(ggpubr)
+
+plot(mantel1, main = "Mantel's test")
+plot(mantel2, main = "Mantel's test")
+
+
+#Make a table with colour and bray curtis information for plotting
+bray_matrix_df = pw_mat_to_df(as.matrix(bray_matrix))
+
+#1. match IDs in bray_matrix_df with ordered_df_colour
+head(bray_matrix_df)
+head(ordered_df_colour)
+df_col = ordered_df_colour[order(row.names(ordered_df_colour)),]
+df_bray = bray_matrix_df[order(row.names(bray_matrix_df)),]
+colnames(df_bray) = c('id_1', 'id_2', 'id_link', 'bray_value')
+df_all = cbind(df_col, df_bray)
+head(df_all)
+df_all = df_all[,c(1:6, 11)]
+colnames(df_all) = c('AMP.ID1', 'AMP.ID2', 'ID_link', 'Colour.Distance', 'Infection1', 'Infection2', 'Bray.Curtis.Distance')
+#write.table(df_col, "df_col", sep = ',', row.names = FALSE)
+#write.table(df_bray, "df_bray", sep = ",", row.names = FALSE)
+write.table(df_all, "bray_colour_distances_df.csv", sep = ",", row.names = FALSE)
+
+ggplot (df_all, aes(x = Bray.Curtis.Distance, y  = Colour.Distance)) +
+  geom_point() +
+  stat_smooth(method = "lm", col = "red")
+
+ggplot (df_all, aes(x = Colour.Distance, y  = Bray.Curtis.Distance)) +
+  geom_point() +
+  stat_smooth(method = "lm", col = "red")
+
+
+p1<-ggplot(df_all, aes(x=Bray.Curtis.Distance, y=Colour.Distance)) +
+  geom_point(size=1, color="#69b3a2") +
+  geom_smooth(method=lm , color="red", fill="#69b3a2", se=TRUE)+
+  theme_ipsum()
+
+p1
+p1<-p1+
+  stat_cor(
+    aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")),
+    label.x = 0.5
+  )
+p1
+p1 +labs(x = "Distance Bray-Curtis", y = "Distance Couleur")
