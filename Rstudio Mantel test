@@ -30,18 +30,7 @@ library(ALDEx2)
 library(GUniFrac)
 library(microbiome)
 
-### Distance matrix Colours 
-library(colordistance)
-images = dir("D:/Scolaire/MASTER 2/Stage/Project OG8254 - Microbiome project/Catégoriser les couleurs des morphes/R dossier colordistance/test_colordistance_noir_infection", full.names = TRUE)
-histList = colordistance::getHistList(images, lower = c(0,0,0), upper = c(0.1, 0.1, 0.1), bins = rep(2, 3), plotting = TRUE, pausing = FALSE)
-plotClusters(histList)
-histList # a list of data frames, one data frame for each image.
-#Earth Mover's Distance (EMD) is the minimum cost of transforming one distribution into another (the greater the colour difference, the higher the cost).
-CMD = colordistance::getColorDistanceMatrix(histList, method = "emd", plotting = FALSE)
-CMD #matrix of pairwise comparisons. This is what we want for the mantel test (there is no need to perform a PCA here, there is only one value per comparison per pair).
-write.table(CMD,"colordistance_matrix.csv", sep = ",", row.names = FALSE)
-##convert colour distance matrix to tsv file - notepad
-# "colour_dist.tsv"
+
 
 # load and subset data  (and rarefy) ----------------------------------------------------
 #metadata_inf2 = The metadata file with type of infection without the infection by both
@@ -49,12 +38,27 @@ write.table(CMD,"colordistance_matrix.csv", sep = ",", row.names = FALSE)
 #metadata_inf = The metadata file with type of infection without the infection by both (I removed the environmental samples)
 
 #read files in as a microeco table 
+setwd("D:/Scolaire/MASTER 2/Stage/Redaction de l'étude & rapport/Résultats/data from qiime2/Subset-data")
+# mec = qiime2meco(
+#   "clean-filtered-table-2-500-silva_noParasites.qza",
+#   sample_table = "metadata_inf.tsv", #changer le tableau de données en fonction de ce quon veut comme données
+#   taxonomy_table = "clean-filtered-2-500-taxonomy-silva_noParasites.qza",
+#   phylo_tree = "clean-filtered-2-500-rooted-tree_noParasite.qza",
+#   rep_fasta = "clean-filtered-2-500-rep-seqs-silva_noParasites.qza")
+
+# #Read files without samples 09 and 16
+meta = read.table("metadata_inf.tsv", sep = "\t", header = TRUE)
+meta = meta %>% filter (AMP.ID!='AMP23-09')
+meta = meta %>% filter (AMP.ID!='AMP23-16')
+write.table(meta, 'metadata_no9-16.tsv', sep = "\t", row.names = FALSE)
+#read files in as a microeco table 
 mec = qiime2meco(
   "clean-filtered-table-2-500-silva_noParasites.qza",
-  sample_table = "metadata_inf.tsv", #changer le tableau de données en fonction de ce quon veut comme données
+  sample_table = "metadata_no9-16.ts", #changer le tableau de données en fonction de ce quon veut comme données
   taxonomy_table = "clean-filtered-2-500-taxonomy-silva_noParasites.qza",
   phylo_tree = "clean-filtered-2-500-rooted-tree_noParasite.qza",
   rep_fasta = "clean-filtered-2-500-rep-seqs-silva_noParasites.qza")
+
 
 
 mec
@@ -86,6 +90,12 @@ mec$sample_sums() %>% range
 
 mec$sample_table$AMP.ID
 mec
+#microtable-class object:
+#sample_table have 65 rows and 7 columns
+#otu_table have 1923 rows and 65 columns
+#tax_table have 1923 rows and 7 columns
+#phylo_tree have 1923 tips
+#rep_fasta have 1923 sequences
 
 #ASV level
 mecASV = mec
@@ -157,6 +167,12 @@ head(colour_df)
 #colour = colour [1:65, 1:65] #subset table to remove duplicated samples - done once and table saved, just use the saved table, there is no need to do this again
 #write.table(colour, 'colour_dist_correct_IDs.csv', sep = ",", row.names = FALSE)
 
+# #remove samples 9 and 16 from colour matrix
+colour_df = colour_df %>% filter (id_1 != 'AMP23-09')
+colour_df = colour_df %>% filter (id_2 != 'AMP23-09')
+colour_df = colour_df %>% filter (id_1 != 'AMP23-16')
+colour_df = colour_df %>% filter (id_2 != 'AMP23-16')
+colour = df_to_pw_mat (colour_df,from = 'id_1', to = 'id_2', value = 'value' )
 
 # Mantel test (individual, not ordered) -------------------------------
 #match bray_matrix with colour
@@ -174,20 +190,16 @@ library(ade4)
 colour = as.dist(colour)
 bray_matrix = as.dist(bray_matrix)
 mantel1<-mantel.randtest(colour, bray_matrix, nrepet = 9999)
-mantel1
 
+mantel1
 #Monte-Carlo test
 #Call: mantel.randtest(m1 = colour, m2 = bray_matrix, nrepet = 9999)
-
 #Observation: -0.06715898 
-
 #Based on 9999 replicates
 #Simulated p-value: 0.824 
 #Alternative hypothesis: greater 
-
 #Std.Obs   Expectation      Variance 
 #-0.9317109336 -0.0003870963  0.0051359987 
-
 
 
 # Mnatel test, individual, ordered   --------
@@ -217,6 +229,7 @@ ordered_colour = as.dist(ordered_colour)
 bray_matrix = as.dist(bray_matrix)
 mantel.randtest(ordered_colour, bray_matrix, nrepet = 9999) #same result --> order of rows in the two tables does not matter to the test, great!
 
+
 #Monte-Carlo test
 #Call: mantel.randtest(m1 = ordered_colour, m2 = bray_matrix, nrepet = 9999)
 #Observation: -0.06997945 
@@ -225,9 +238,6 @@ mantel.randtest(ordered_colour, bray_matrix, nrepet = 9999) #same result --> ord
 #Alternative hypothesis: greater 
 #Std.Obs   Expectation      Variance 
 #-0.9820455755  0.0001764777  0.0051034683 
-
-
-
 
 #############
 
@@ -282,6 +292,7 @@ infection_link = ifelse(ordered_df_colour$infection_link == 'cestode_acanthoceph
 ordered_df_colour$infection_link = infection_link
 as.factor(infection_link) #10 levels, no longer 16
 rm (infection_link)
+write.table(ordered_df_colour,file="ordered_df_colour.csv",sep=",", row.names=FALSE)
 
 #calculate a mean by group
 library(dplyr)
@@ -342,8 +353,8 @@ bray_group_matrix = as.dist(bray_group_matrix, diag = FALSE) #diag = FALSE will 
 # Mantel test for group distances -----------------------------------------
 library(ade4)
 mantel2<-mantel.randtest(dist_col_group, bray_group_matrix, nrepet = 9999)
-mantel2
 
+mantel2
 #Monte-Carlo test
 #Call: mantel.randtest(m1 = dist_col_group, m2 = bray_group_matrix, 
 #                      nrepet = 9999)
@@ -356,6 +367,23 @@ mantel2
 
 #Std.Obs  Expectation     Variance 
 #-1.838086481 -0.001467771  0.220613037 
+
+
+mantel(dist_col_group, bray_group_matrix, method = "spearman", permutations = 9999, na.rm = TRUE)
+
+#Mantel statistic based on Spearman's rank correlation rho 
+#Call:
+#  mantel(xdis = dist_col_group, ydis = bray_group_matrix, method = "spearman",      permutations = 9999, na.rm = TRUE) 
+
+#Mantel statistic r: -0.9429 
+#Significance: 1 
+
+#Upper quantiles of permutations (null model):
+#  90%   95% 97.5%   99% 
+#  0.600 0.651 0.734 0.791 
+#Permutation: free
+#Number of permutations: 23
+
 
 
 
@@ -395,6 +423,10 @@ ggplot (df_all, aes(x = Colour.Distance, y  = Bray.Curtis.Distance)) +
   geom_point() +
   stat_smooth(method = "lm", col = "red")
 
+ggplot (df_all, aes(x = Bray.Curtis.Distance, y  = Colour.Distance, label = rownames(df_all))) + 
+  geom_point() +
+  geom_text( size = 2) +
+  stat_smooth(method = "lm", col = "red") 
 
 p1<-ggplot(df_all, aes(x=Bray.Curtis.Distance, y=Colour.Distance)) +
   geom_point(size=1, color="#69b3a2") +
@@ -409,3 +441,68 @@ p1<-p1+
   )
 p1
 p1 +labs(x = "Distance Bray-Curtis", y = "Distance Couleur")
+  
+
+  ####################################################
+
+# PCAs for the eight colour variables per sample --------------------------
+color = read.csv("amphipods_rgb_eight_bins.csv", header = TRUE)
+head(color)
+dim (color)
+rownames (color)
+color$sampleID
+rownames(color) = color$sampleID
+bray_scores = as.data.frame(cbind(Bray$res_ordination$scores$PCo1, Bray$res_ordination$scores$AMP.ID, Bray$res_ordination$scores$Infection))
+colnames(bray_scores) = c('PC1-score', 'AMP-ID', 'Infection')
+rownames(bray_scores) = bray_scores$'AMP-ID'
+
+match (rownames(color), rownames(bray_scores))
+color_sub = subset(color, rownames(color) %in% rownames(bray_scores))
+dim(color_sub)
+
+match (rownames(color_sub), rownames(bray_scores))
+
+#PCA in color
+head(color_sub)
+ncol(color_sub)
+#PCA(color_sub[,2:ncol(color_sub)])
+
+color_sub$Infection = bray_scores$Infection
+pca = prcomp(color_sub[,2:25], scale = TRUE, center = TRUE)
+
+#plotting the color PCA
+library(ggfortify)
+autoplot(pca, data = color_sub, colour = 'Infection', loadings = TRUE)
+summary(pca)
+autoplot(pca, data = color_sub, colour = 'Infection',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 5, frame = TRUE) 
+#separate red, green and blue
+colnames(color_sub)
+red_pca =  prcomp(color_sub[,2:9], scale = TRUE, center = TRUE)
+autoplot(red_pca, data = color_sub, colour = 'Infection',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 3, frame = TRUE)
+summary(red_pca)
+green_pca =  prcomp(color_sub[,10:17], scale = TRUE, center = TRUE)
+autoplot(green_pca, data = color_sub, colour = 'Infection',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 3, frame = TRUE)
+summary(green_pca)
+blue_pca =  prcomp(color_sub[,18:25], scale = TRUE, center = TRUE)
+autoplot(blue_pca, data = color_sub, colour = 'Infection',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 3, frame = TRUE)
+summary(blue_pca)
+PCT_pca = prcomp(color_sub[,26:33], scale = TRUE, center = TRUE)
+autoplot(PCT_pca, data = color_sub, colour = 'Infection',
+         loadings = TRUE, loadings.colour = 'blue',
+         loadings.label = TRUE, loadings.label.size = 3, frame = TRUE)
+summary(PCT_pca)
+
+#Correlation between microbiome PC1 (beta diversity based on Bray Curtis) and colour PC1
+dim(pca$x)
+scores_col = as.data.frame(pca$x)
+pc1_col = scores_col$PC1
+cor(pc1_col, as.numeric(bray_scores$`PC1-score`))
+#[1] 0.1697388 - very weak positive correlation, not even worth testing for significance.
