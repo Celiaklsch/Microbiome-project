@@ -54,7 +54,7 @@ write.table(meta, 'metadata_no9-16.tsv', sep = "\t", row.names = FALSE)
 #read files in as a microeco table 
 mec = qiime2meco(
   "clean-filtered-table-2-500-silva_noParasites.qza",
-  sample_table = "metadata_no9-16.ts", #changer le tableau de données en fonction de ce quon veut comme données
+  sample_table = "metadata_no9-16.tsv", #changer le tableau de données en fonction de ce quon veut comme données
   taxonomy_table = "clean-filtered-2-500-taxonomy-silva_noParasites.qza",
   phylo_tree = "clean-filtered-2-500-rooted-tree_noParasite.qza",
   rep_fasta = "clean-filtered-2-500-rep-seqs-silva_noParasites.qza")
@@ -194,12 +194,25 @@ mantel1<-mantel.randtest(colour, bray_matrix, nrepet = 9999)
 mantel1
 #Monte-Carlo test
 #Call: mantel.randtest(m1 = colour, m2 = bray_matrix, nrepet = 9999)
-#Observation: -0.06715898 
+#Observation: -0.08956261
 #Based on 9999 replicates
-#Simulated p-value: 0.824 
+
+#Simulated p-value: 0.8863 
 #Alternative hypothesis: greater 
 #Std.Obs   Expectation      Variance 
 #-0.9317109336 -0.0003870963  0.0051359987 
+
+mantel(colour, bray_matrix, method = "spearman", permutations = 9999, na.rm = TRUE)
+
+#Mantel statistic r: -0.07715 
+#Significance: 0.8634  
+
+#Upper quantiles of permutations (null model):
+#  90%    95%  97.5%    99% 
+#  0.0943 0.1246 0.1497 0.1792 
+#Permutation: free
+#Number of permutations: 9999
+
 
 
 # Mnatel test, individual, ordered   --------
@@ -232,159 +245,23 @@ mantel.randtest(ordered_colour, bray_matrix, nrepet = 9999) #same result --> ord
 
 #Monte-Carlo test
 #Call: mantel.randtest(m1 = ordered_colour, m2 = bray_matrix, nrepet = 9999)
-#Observation: -0.06997945 
+#Observation: -0.05088366 
 #Based on 9999 replicates
-#Simulated p-value: 0.8375 
+#Simulated p-value: 0.7367 
 #Alternative hypothesis: greater 
 #Std.Obs   Expectation      Variance 
 #-0.9820455755  0.0001764777  0.0051034683 
 
-#############
+mantel(ordered_colour, bray_matrix, method = "spearman", permutations = 9999, na.rm = TRUE)
 
-# Group samples under Infection -------------------------------------------
-
-#Group samples in the colour df table based on 'Infection' group
-infection_df = as.data.frame(cbind(mec$sample_table$AMP.ID, mec$sample_table$Infection)) #make a key linking AMP.ID and Infection
-colnames(infection_df) = c('AMP.ID', 'Infection') #rename columns
-head(infection_df)
-
-#add infection information to ordered_df_colour
-#first for id_1
-infection1 = character()
-infection1
-for (i in 1:nrow(ordered_df_colour)) {
-  status = match (ordered_df_colour[i,'id_1'], infection_df$AMP.ID)
-  infection = print(infection_df[status,2])
-  infection1 = c(infection1, infection)
-}
-ordered_df_colour$infection1 = infection1
-head(ordered_df_colour)
-rm(infection1)
-#now for id_2
-infection2 = character()
-infection2
-for (i in 1:nrow(ordered_df_colour)) {
-  status = match (ordered_df_colour[i,'id_2'], infection_df$AMP.ID)
-  infection = print(infection_df[status,2])
-  infection2 = c(infection2, infection)
-}
-ordered_df_colour$infection2 = infection2
-head(ordered_df_colour)
-#View(ordered_df_colour)
-summary(ordered_df_colour)
-rm (infection2)
-
-#create an id_link column for the infection groups
-library(stringi)
-infection_link = stri_paste(ordered_df_colour$infection1, ordered_df_colour$infection2, sep = "_")
-ordered_df_colour$infection_link = infection_link
-rm (infection_link)
-head(ordered_df_colour)
-class(ordered_df_colour$infection_link)
-
-#rename to the same group when the only difference is the order of comparison (example castode-acanto and acanto-cestode are the same group)
-infection_link = ifelse(ordered_df_colour$infection_link == 'cestode_acanthocephale','acanthocephale_cestode', 
-       ifelse(ordered_df_colour$infection_link == 'infection mixte_acanthocephale','acanthocephale_infection mixte',
-              ifelse (ordered_df_colour$infection_link == 'non-infecte_acanthocephale', 'acanthocephale_non-infecte',
-                      ifelse (ordered_df_colour$infection_link == 'infection mixte_cestode',  'cestode_infection mixte',
-                              ifelse (ordered_df_colour$infection_link == 'non-infecte_cestode','cestode_non-infecte',
-                                      ifelse(ordered_df_colour$infection_link == 'non-infecte_infection mixte', 'infection mixte_non-infecte', ordered_df_colour$infection_link))))))
-ordered_df_colour$infection_link = infection_link
-as.factor(infection_link) #10 levels, no longer 16
-rm (infection_link)
-write.table(ordered_df_colour,file="ordered_df_colour.csv",sep=",", row.names=FALSE)
-
-#calculate a mean by group
-library(dplyr)
-group_colour = ordered_df_colour %>%
-  group_by (infection_link) %>%
-  summarise(value = mean(value))
-group_colour
-class(group_colour)
-
-#add a column for each Infection ID again
-ids = as.data.frame(str_split(group_colour$infection_link, "_", simplify = TRUE))
-class(ids)
-group_colour$infection1 = ids$V1
-group_colour$infection2 = ids$V2
-group_colour
-
-#make a pairwise table in excel, as this will not work as a distance matrix in R given the high values in within-group comparisons
-
-col_group = read.csv("group_colour_dist.csv", header = TRUE)
-head(col_group)
-class(col_group)
-row.names(col_group) = col_group$ids
-col_group = col_group[,2:5]
-col_group
-col_group = as.matrix(col_group)
-dim(col_group)
-#transform into distance matrix
-dist_col_group = as.dist(col_group, diag = FALSE) #diag = FALSE will remove withing-group comparisons (diag = TRUE will assing 0 to within-group comparisons)
-
-#microbiome group distance
-Bray$cal_group_distance (within_group = FALSE)
-Bray$res_group_distance
-bray_group = Bray$res_group_distance
-class(bray_group)
-head(bray_group)
-#separate the "Infection" column into two columns 
-df = str_split(bray_group$Infection, "vs", simplify = TRUE)
-bray_group = cbind(bray_group, df)
-head(bray_group)
-colnames(bray_group) = c("Value", "Infection_link", "infection1", "infection2")
-#transform the bray_group dataframe into a distance matrix
-class(bray_group)
-bray_group_matrix = df_to_pw_mat(bray_group, "infection1", "infection2", value = "Value")
-head(bray_group_matrix)
-#write the table in csv format to remove spaces, which are causing IDs to be interpreted as different IDs
-#write.table(bray_group_matrix, "bray_group_dist_matrix.csv",sep = ",", row.names = TRUE)
-bray_group_matrix = read.csv("bray_group_dist_matrix.csv", header = TRUE)
-head(bray_group_matrix)
-class(bray_group_matrix)
-row.names(bray_group_matrix) = bray_group_matrix$ids
-bray_group_matrix = bray_group_matrix[,2:5]
-bray_group_matrix
-bray_group_matrix = as.matrix(bray_group_matrix)
-dim(bray_group_matrix)
-#transform into distance matrix
-bray_group_matrix = as.dist(bray_group_matrix, diag = FALSE) #diag = FALSE will remove withing-group comparisons (diag = TRUE will assing 0 to within-group comparisons)
-
-# Mantel test for group distances -----------------------------------------
-library(ade4)
-mantel2<-mantel.randtest(dist_col_group, bray_group_matrix, nrepet = 9999)
-
-mantel2
-#Monte-Carlo test
-#Call: mantel.randtest(m1 = dist_col_group, m2 = bray_group_matrix, 
-#                      nrepet = 9999)
-
-#Observation: -0.8648071 
-
-#Based on 9999 replicates
-#Simulated p-value: 1 
-#Alternative hypothesis: greater 
-
-#Std.Obs  Expectation     Variance 
-#-1.838086481 -0.001467771  0.220613037 
-
-
-mantel(dist_col_group, bray_group_matrix, method = "spearman", permutations = 9999, na.rm = TRUE)
-
-#Mantel statistic based on Spearman's rank correlation rho 
-#Call:
-#  mantel(xdis = dist_col_group, ydis = bray_group_matrix, method = "spearman",      permutations = 9999, na.rm = TRUE) 
-
-#Mantel statistic r: -0.9429 
-#Significance: 1 
+#Mantel statistic r: -0.05168 
+#Significance: 0.759 
 
 #Upper quantiles of permutations (null model):
-#  90%   95% 97.5%   99% 
-#  0.600 0.651 0.734 0.791 
+#  90%    95%  97.5%    99% 
+#  0.0943 0.1246 0.1497 0.1792 
 #Permutation: free
-#Number of permutations: 23
-
-
+#Number of permutations: 9999
 
 
 
@@ -505,4 +382,5 @@ dim(pca$x)
 scores_col = as.data.frame(pca$x)
 pc1_col = scores_col$PC1
 cor(pc1_col, as.numeric(bray_scores$`PC1-score`))
-#[1] 0.1697388 - very weak positive correlation, not even worth testing for significance.
+#[1] -0.09213291 - no correlation
+
